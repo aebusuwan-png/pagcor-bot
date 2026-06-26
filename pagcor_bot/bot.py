@@ -470,10 +470,9 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             drive, sheets_svc, games_data, client_name, approved_lookup
         )
         await update.message.reply_text(
-            f"File created successfully!\n\n"
-            f"*{file_name}*\n"
-            f"{sheet_url}",
-            parse_mode="Markdown"
+            f"✅ File created successfully!\n\n"
+            f"📄 {file_name}\n\n"
+            f"🔗 {sheet_url}"
         )
     except Exception as e:
         logger.error(f"Error: {e}", exc_info=True)
