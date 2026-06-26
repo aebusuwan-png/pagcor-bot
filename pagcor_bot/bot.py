@@ -548,7 +548,7 @@ async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 # ─── MAIN ───────────────────────────────────────────────────────────────────────
-def main():
+async def main():
     app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
     conv_handler = ConversationHandler(
@@ -563,7 +563,10 @@ def main():
     app.add_handler(conv_handler)
 
     logger.info("Bot started...")
-    app.run_polling(drop_pending_updates=True)
+    await app.run_polling(drop_pending_updates=True)
+
+import asyncio
 
 if __name__ == "__main__":
+    asyncio.run(main())
     main()
