@@ -162,10 +162,10 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         cert = find_cert_folder(drive, g["Name"], g["GameID"])
         cert_val = cert if cert else "This game has not yet been scheduled for lab certification"
 
-        min_bet = f"PHP {g['Min_Bet']}" if g["Min_Bet"] else ""
-        max_bet = f"PHP {g['Max_Bet']}" if g["Max_Bet"] else ""
-        def_bet = f"PHP {g['Default_Bet']}" if g["Default_Bet"] else ""
-        max_exp = f"PHP {g['Max_Exposure']}" if g["Max_Exposure"] else ""
+        min_bet = f"₱{g['Min_Bet']}" if g["Min_Bet"] else ""
+        max_bet = f"₱{g['Max_Bet']}" if g["Max_Bet"] else ""
+        def_bet = f"₱{g['Default_Bet']}" if g["Default_Bet"] else ""
+        max_exp = f"₱{g['Max_Exposure']}" if g["Max_Exposure"] else ""
 
         row = [
             g["GameID"], g["Name"], g["GAME_VERSION"], g["GAME_OFFERING"], g["Game_Type"],
@@ -207,6 +207,97 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     sheet_url = created["webViewLink"]
 
     # Transfer ownership to jaaeofficial@jiligames.com
+    # Add title row + formatting via Sheets API
+    try:
+        sheets_svc2 = build("sheets", "v4", credentials=drive._http.credentials)
+        
+        # Insert title row at top
+        sheets_svc2.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id,
+            body={"requests": [
+                # Insert blank row at top for title
+                {"insertDimension": {
+                    "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                    "inheritFromBefore": False
+                }}
+            ]}
+        ).execute()
+
+        # Write title
+        sheets_svc2.spreadsheets().values().update(
+            spreadsheetId=sheet_id,
+            range="Sheet1!A1",
+            valueInputOption="RAW",
+            body={"values": [["JILI Games: PAGCOR Game Parameter and RTP Details"]]}
+        ).execute()
+
+        num_cols = 27
+        requests = [
+            # Merge title row
+            {"mergeCells": {
+                "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
+                          "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "mergeType": "MERGE_ALL"
+            }},
+            # Title style
+            {"repeatCell": {
+                "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
+                          "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.051, "green": 0.231, "blue": 0.431},
+                    "textFormat": {"bold": True, "fontSize": 11,
+                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "verticalAlignment": "MIDDLE",
+                    "padding": {"left": 8}
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Header row style
+            {"repeatCell": {
+                "range": {"sheetId": 0, "startRowIndex": 1, "endRowIndex": 2,
+                          "startColumnIndex": 0, "endColumnIndex": num_cols},
+                "cell": {"userEnteredFormat": {
+                    "backgroundColor": {"red": 0.122, "green": 0.306, "blue": 0.475},
+                    "textFormat": {"bold": True, "fontSize": 9,
+                                   "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
+                    "horizontalAlignment": "CENTER",
+                    "verticalAlignment": "MIDDLE",
+                    "wrapStrategy": "WRAP"
+                }},
+                "fields": "userEnteredFormat"
+            }},
+            # Freeze top 2 rows
+            {"updateSheetProperties": {
+                "properties": {"sheetId": 0, "gridProperties": {"frozenRowCount": 2}},
+                "fields": "gridProperties.frozenRowCount"
+            }},
+            # Title row height
+            {"updateDimensionProperties": {
+                "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                "properties": {"pixelSize": 30}, "fields": "pixelSize"
+            }},
+            # Header row height
+            {"updateDimensionProperties": {
+                "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
+                "properties": {"pixelSize": 45}, "fields": "pixelSize"
+            }},
+            # Name column width
+            {"updateDimensionProperties": {
+                "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
+                "properties": {"pixelSize": 160}, "fields": "pixelSize"
+            }},
+            # Last 3 columns width
+            {"updateDimensionProperties": {
+                "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 27},
+                "properties": {"pixelSize": 300}, "fields": "pixelSize"
+            }},
+        ]
+        sheets_svc2.spreadsheets().batchUpdate(
+            spreadsheetId=sheet_id, body={"requests": requests}
+        ).execute()
+    except Exception as fmt_err:
+        logger.warning(f"Formatting failed (non-critical): {fmt_err}")
+
     # Set public permission
     drive.permissions().create(
         fileId=sheet_id,
