@@ -1,6 +1,7 @@
 import os
 import re
 import logging
+import asyncio
 from datetime import datetime
 from telegram import Update
 from telegram.ext import (
@@ -14,18 +15,22 @@ import json
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ?Ä?Ä?Ä CONFIG ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-ALLOWED_USER_ID     = int(os.environ["ALLOWED_USER_ID"])
-TELEGRAM_TOKEN      = os.environ["TELEGRAM_TOKEN"]
-SPREADSHEET_ID      = "1Yv3xRFyqR2ykQPSpH30zpHSGn0_r8FozFiSNXaVanpU"
-OUTPUT_FOLDER_ID    = "1crTziUo1EHvObK-msx63LNMYGOosxd00"
-INSTRUCTION_SLOT_FOLDER   = "1r5K5KHpD-i6gEkQ9Hc3tnL33KNDWHt28"
-CERT_JILI_FOLDER    = "1TMJiM0fBTedI4C55f7phObwQ-8jqpWBm"
+ALLOWED_USER_ID   = int(os.environ["ALLOWED_USER_ID"])
+TELEGRAM_TOKEN    = os.environ["TELEGRAM_TOKEN"]
+SPREADSHEET_ID    = "1Yv3xRFyqR2ykQPSpH30zpHSGn0_r8FozFiSNXaVanpU"
+OUTPUT_FOLDER_ID  = "1crTziUo1EHvObK-msx63LNMYGOosxd00"
+CERT_JILI_FOLDER  = "1TMJiM0fBTedI4C55f7phObwQ-8jqpWBm"
+INSTRUCTION_FOLDERS = [
+    "1r5K5KHpD-i6gEkQ9Hc3tnL33KNDWHt28",
+    "1UUb2uXq1EJPq-HWa8MPZed6TxJxbz1lX",
+    "1Kgy7Jqi5akFVTFsSvhU7w9J3oIEaHimW",
+    "1XVNMHilWKrNidX0sjP8rr0t_e6bl0_S9",
+    "1bXgsQDqDcqLAylVbhEEzY05QX7mnXzGQ",
+]
 
-# Conversation states
-CONFIRM_GAMES, RESOLVE_AMBIGUOUS = range(2)
+CONFIRM_GAMES = 0
 
-# ?Ä?Ä?Ä GOOGLE AUTH ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
+
 def get_google_services():
     sa_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT_JSON"])
     creds = service_account.Credentials.from_service_account_info(
@@ -39,32 +44,30 @@ def get_google_services():
     drive  = build("drive",  "v3", credentials=creds)
     return sheets, drive
 
-# ?Ä?Ä?Ä SHEETS HELPERS ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-def fetch_game_list(sheets) -> list[dict]:
-    """‡∏î‡∏∂‡∏á‡?‡πâ‡∏≠‡∏°‡∏π‡∏•‡?‡∏Å‡∏°‡∏ó‡∏±‡πâ‡?‡∏´‡∏°‡∏î‡?‡∏≤‡? ‡∏î‡∏∂‡∏á‡?‡πâ‡∏≠‡∏°‡∏π‡∏??•Ë©¢Ë°?""
+
+def fetch_game_list(sheets):
     result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
-        range="‡∏î‡∏∂‡∏á‡?‡πâ‡∏≠‡∏°‡∏π‡∏??•Ë©¢Ë°?A2:AB1000"
+        range="‡∏î‡∏∂‡∏á‡∏Ç‡πâ‡∏≠‡∏°‡∏π‡∏•-Êü•Ë©¢Ë°®!A2:AB1000"
     ).execute()
     rows = result.get("values", [])
-
+    keys = ["GameID","Name","GameID2","GAME_VERSION","GAME_OFFERING","Game_Type",
+            "Min_Bet","Max_Bet","Max_Odds","Support","GamePlay","Hit_Rate",
+            "Free_Game_Rate","Default_Bet","Max_Exposure","Paid_Spins","RTP",
+            "SD1","SD2","CI90","CI95","CI99",
+            "CI90_Min","CI90_Max","CI95_Min","CI95_Max","CI99_Min","CI99_Max"]
     games = []
-    headers = ["GameID","Name","GameID2","GAME_VERSION","GAME_OFFERING","Game_Type",
-               "Min_Bet","Max_Bet","Max_Odds","Support","GamePlay","Hit_Rate",
-               "Free_Game_Rate","Default_Bet","Max_Exposure","Paid_Spins","RTP",
-               "SD_General1","SD_General2","CI_90","CI_95","CI_99",
-               "CI_90_Min","CI_90_Max","CI_95_Min","CI_95_Max","CI_99_Min","CI_99_Max"]
     for row in rows:
         if not row or not row[0]:
             continue
-        padded = row + [""] * (len(headers) - len(row))
-        game = dict(zip(headers, padded))
-        if game["GameID"] and game["Name"]:
-            games.append(game)
+        padded = row + [""] * (len(keys) - len(row))
+        g = dict(zip(keys, padded))
+        if g["GameID"] and g["Name"]:
+            games.append(g)
     return games
 
-def fetch_pagcor_approved(sheets) -> dict:
-    """‡∏î‡∏∂‡∏?PAGCOR Approved Product List ??{game_name_upper: pagcor_id}"""
+
+def fetch_pagcor_approved(sheets):
     result = sheets.spreadsheets().values().get(
         spreadsheetId=SPREADSHEET_ID,
         range="PAGCOR Approved Product List!A2:E500"
@@ -78,9 +81,8 @@ def fetch_pagcor_approved(sheets) -> dict:
             lookup[name] = pagcor_id
     return lookup
 
-# ?Ä?Ä?Ä DRIVE HELPERS ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-def list_drive_folder(drive, folder_id: str) -> list[dict]:
-    """List ‡πÑ‡?‡∏•‡?‡πÅ‡∏•‡∏∞‡?‡∏ü‡∏•‡πÄ‡∏î‡∏≠‡∏??‡πÉ‡? folder"""
+
+def list_drive_folder(drive, folder_id):
     files = []
     page_token = None
     while True:
@@ -96,73 +98,51 @@ def list_drive_folder(drive, folder_id: str) -> list[dict]:
             break
     return files
 
-def find_instruction_file(drive, game_name: str, game_id: str) -> str | None:
-    """‡∏Ñ‡?‡∏ô‡∏´‡∏≤‡?‡∏ü‡∏•‡π?instruction ‡πÉ‡? Slot folder (‡πÅ‡∏•‡∏?subfolder ‡∏≠‡∏∑‡πà‡?‡π?"""
+
+def find_instruction_file(drive, game_name, game_id):
     name_upper = game_name.strip().upper()
     id_str = str(game_id).strip()
-
-    # ‡∏Ñ‡?‡∏ô‡∏´‡∏≤‡?‡∏?Slot folder ‡∏Å‡?‡∏≠‡?
-    slot_files = list_drive_folder(drive, INSTRUCTION_SLOT_FOLDER)
-    for f in slot_files:
-        title = f["name"].upper()
-        if name_upper in title or id_str in title:
-            return f["webViewLink"]
-
-    # ‡∏Ñ‡?‡∏ô‡∏´‡∏≤‡?‡∏?subfolder ‡∏≠‡∏∑‡πà‡?‡π?‡∏Ç‡∏≠‡∏?parent folder
-    other_folders = [
-        "1UUb2uXq1EJPq-HWa8MPZed6TxJxbz1lX",  # Table/Card
-        "1Kgy7Jqi5akFVTFsSvhU7w9J3oIEaHimW",  # Fast Game/Casino
-        "1XVNMHilWKrNidX0sjP8rr0t_e6bl0_S9",  # Fishing
-        "1bXgsQDqDcqLAylVbhEEzY05QX7mnXzGQ",  # Bingo
-    ]
-    for fid in other_folders:
-        files = list_drive_folder(drive, fid)
-        for f in files:
+    for folder_id in INSTRUCTION_FOLDERS:
+        for f in list_drive_folder(drive, folder_id):
             title = f["name"].upper()
             if name_upper in title or id_str in title:
                 return f["webViewLink"]
     return None
 
-def find_cert_folder(drive, game_name: str, game_id: str) -> str | None:
-    """‡∏Ñ‡?‡∏ô‡∏´‡∏≤‡?‡∏ü‡∏•‡πÄ‡∏î‡∏≠‡∏?? certificate ‡πÉ‡? JILI Games Certification"""
+
+def find_cert_folder(drive, game_name, game_id):
     name_upper = game_name.strip().upper()
     id_str = str(game_id).strip()
-    cert_files = list_drive_folder(drive, CERT_JILI_FOLDER)
-    for f in cert_files:
+    for f in list_drive_folder(drive, CERT_JILI_FOLDER):
         title = f["name"].upper()
         if name_upper in title or id_str in title:
             return f["webViewLink"]
     return None
 
-# ?Ä?Ä?Ä PAGCOR APPROVAL LOGIC ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-def check_pagcor_approval(game: dict, approved_lookup: dict) -> str:
-    name_upper = game["Name"].strip().upper()
-    game_id    = str(game["GameID"]).strip()
 
+def check_pagcor_approval(game, approved_lookup):
+    name_upper = game["Name"].strip().upper()
+    game_id = str(game["GameID"]).strip()
     if name_upper in approved_lookup:
         pagcor_id_ver = approved_lookup[name_upper]
         pagcor_num = pagcor_id_ver.split("-")[0].strip()
         if pagcor_num == game_id:
-            return f"Approved by PAGCOR ??Game ID & Name matched (PAGCOR ID: {pagcor_id_ver})"
+            return f"Approved by PAGCOR - Game ID & Name matched (PAGCOR ID: {pagcor_id_ver})"
         else:
-            return f"Approved by PAGCOR ??Name matched, but Game ID differs (JILI ID: {game_id} / PAGCOR ID: {pagcor_id_ver})"
+            return f"Approved by PAGCOR - Name matched, but Game ID differs (JILI ID: {game_id} / PAGCOR ID: {pagcor_id_ver})"
     return "Not yet approved by PAGCOR"
 
-# ?Ä?Ä?Ä BUILD GOOGLE SHEETS OUTPUT ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-def build_output_sheet(drive, sheets_svc, games_data: list[dict],
-                       client_name: str, approved_lookup: dict) -> str:
-    """‡∏™‡∏£‡πâ‡∏≤‡∏?Google Sheets ‡πÉ‡∏´‡∏°‡? ‡πÅ‡∏•‡πâ‡∏ß return link"""
-    today     = datetime.now().strftime("%Y%m%d")
-    count     = len(games_data)
+
+def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_lookup):
+    today = datetime.now().strftime("%Y%m%d")
+    count = len(games_data)
     file_name = f"{today}_PAGCOR_{client_name}_{count}games"
 
-    # ‡∏™‡∏£‡πâ‡∏≤‡∏?Google Sheets ‡πÄ‡∏õ‡∏•‡πà‡∏≤
     sheet_body = {"properties": {"title": file_name}}
     created = sheets_svc.spreadsheets().create(body=sheet_body).execute()
-    sheet_id     = created["spreadsheetId"]
-    sheet_url    = created["spreadsheetUrl"]
+    sheet_id  = created["spreadsheetId"]
+    sheet_url = created["spreadsheetUrl"]
 
-    # ‡∏¢‡?‡∏≤‡∏¢‡πÑ‡?‡πÑ‡∏ß‡πâ‡?‡∏?output folder
     file_meta = drive.files().get(fileId=sheet_id, fields="parents").execute()
     prev_parents = ",".join(file_meta.get("parents", []))
     drive.files().update(
@@ -172,11 +152,10 @@ def build_output_sheet(drive, sheets_svc, games_data: list[dict],
         fields="id,parents"
     ).execute()
 
-    # Headers
-    title_row = ["JILI Games: PAGCOR Game Parameter and RTP Details"] + [""] * 26
+    title_row  = ["JILI Games: PAGCOR Game Parameter and RTP Details"] + [""] * 26
     header_row = [
         "GameID", "Name", "GAME VERSION", "GAME OFFERING", "Game Type",
-        "Min Bet (??", "Max Bet (??", "Max Odds", "Support", "GamePlay",
+        "Min Bet (PHP)", "Max Bet (PHP)", "Max Odds", "Support", "GamePlay",
         "Default Bet", "Max Exposure", "RTP",
         "standard deviation (General)", "standard deviation (General)",
         "90.0% Confidence Range", "95.0% Confidence Range", "99.0% Confidence Range",
@@ -188,38 +167,33 @@ def build_output_sheet(drive, sheets_svc, games_data: list[dict],
         "Game Certificate File",
     ]
 
-    # Data rows
     data_rows = []
     for g in games_data:
         approval = check_pagcor_approval(g, approved_lookup)
-
         instr = find_instruction_file(drive, g["Name"], g["GameID"])
-        instr_val = f"?? {instr}" if instr else "Please contact JILI BD"
-
+        instr_val = instr if instr else "Please contact JILI BD"
         cert = find_cert_folder(drive, g["Name"], g["GameID"])
-        cert_val = f"?? {cert}" if cert else "This game has not yet been scheduled for lab certification"
+        cert_val = cert if cert else "This game has not yet been scheduled for lab certification"
 
-        # Min/Max Bet ‡πÉ‡∏™‡π???        min_bet = f"?±{g['Min_Bet']}" if g["Min_Bet"] else ""
-        max_bet = f"?±{g['Max_Bet']}" if g["Max_Bet"] else ""
-        def_bet = f"?±{g['Default_Bet']}" if g["Default_Bet"] else ""
-        max_exp = f"?±{g['Max_Exposure']}" if g["Max_Exposure"] else ""
+        min_bet = f"PHP {g['Min_Bet']}" if g["Min_Bet"] else ""
+        max_bet = f"PHP {g['Max_Bet']}" if g["Max_Bet"] else ""
+        def_bet = f"PHP {g['Default_Bet']}" if g["Default_Bet"] else ""
+        max_exp = f"PHP {g['Max_Exposure']}" if g["Max_Exposure"] else ""
 
         row = [
             g["GameID"], g["Name"], g["GAME_VERSION"], g["GAME_OFFERING"], g["Game_Type"],
             min_bet, max_bet, g["Max_Odds"], g["Support"], g["GamePlay"],
             def_bet, max_exp, g["RTP"],
-            g["SD_General1"], g["SD_General2"],
-            g["CI_90"], g["CI_95"], g["CI_99"],
-            g["CI_90_Min"], g["CI_90_Max"],
-            g["CI_95_Min"], g["CI_95_Max"],
-            g["CI_99_Min"], g["CI_99_Max"],
+            g["SD1"], g["SD2"],
+            g["CI90"], g["CI95"], g["CI99"],
+            g["CI90_Min"], g["CI90_Max"],
+            g["CI95_Min"], g["CI95_Max"],
+            g["CI99_Min"], g["CI99_Max"],
             approval, instr_val, cert_val,
         ]
         data_rows.append(row)
 
     all_rows = [title_row, header_row] + data_rows
-
-    # Write data
     sheets_svc.spreadsheets().values().update(
         spreadsheetId=sheet_id,
         range="Sheet1!A1",
@@ -227,15 +201,12 @@ def build_output_sheet(drive, sheets_svc, games_data: list[dict],
         body={"values": all_rows}
     ).execute()
 
-    # Formatting
     requests = [
-        # Merge title row
         {"mergeCells": {
             "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
                       "startColumnIndex": 0, "endColumnIndex": 27},
             "mergeType": "MERGE_ALL"
         }},
-        # Title style
         {"repeatCell": {
             "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
                       "startColumnIndex": 0, "endColumnIndex": 27},
@@ -243,12 +214,10 @@ def build_output_sheet(drive, sheets_svc, games_data: list[dict],
                 "backgroundColor": {"red": 0.051, "green": 0.231, "blue": 0.431},
                 "textFormat": {"bold": True, "fontSize": 11,
                                "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
-                "verticalAlignment": "MIDDLE",
-                "padding": {"left": 8}
+                "verticalAlignment": "MIDDLE"
             }},
             "fields": "userEnteredFormat"
         }},
-        # Header row style
         {"repeatCell": {
             "range": {"sheetId": 0, "startRowIndex": 1, "endRowIndex": 2,
                       "startColumnIndex": 0, "endColumnIndex": 27},
@@ -262,117 +231,45 @@ def build_output_sheet(drive, sheets_svc, games_data: list[dict],
             }},
             "fields": "userEnteredFormat"
         }},
-        # Freeze rows 1+2
         {"updateSheetProperties": {
             "properties": {"sheetId": 0, "gridProperties": {"frozenRowCount": 2}},
             "fields": "gridProperties.frozenRowCount"
         }},
-        # Row 1 height
-        {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
-            "properties": {"pixelSize": 32}, "fields": "pixelSize"
-        }},
-        # Row 2 height
-        {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
-            "properties": {"pixelSize": 45}, "fields": "pixelSize"
-        }},
-        # Col B (Name) width
         {"updateDimensionProperties": {
             "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
             "properties": {"pixelSize": 160}, "fields": "pixelSize"
         }},
-        # Col Y (Approval) width
         {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 25},
-            "properties": {"pixelSize": 340}, "fields": "pixelSize"
-        }},
-        # Col Z, AA width
-        {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 25, "endIndex": 27},
-            "properties": {"pixelSize": 380}, "fields": "pixelSize"
+            "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 27},
+            "properties": {"pixelSize": 350}, "fields": "pixelSize"
         }},
     ]
-
-    # Data row alternating colors + approval color
-    for i, g in enumerate(games_data):
-        row_idx = i + 2  # 0-indexed, row 0=title, 1=header, 2+=data
-        bg = {"red": 0.922, "green": 0.953, "blue": 0.984} if i % 2 == 0 else {"red": 1, "green": 1, "blue": 1}
-        requests.append({"repeatCell": {
-            "range": {"sheetId": 0, "startRowIndex": row_idx, "endRowIndex": row_idx + 1,
-                      "startColumnIndex": 0, "endColumnIndex": 25},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": bg,
-                "textFormat": {"fontSize": 9},
-                "verticalAlignment": "MIDDLE"
-            }},
-            "fields": "userEnteredFormat"
-        }})
-
-        # Approval cell color
-        approval = check_pagcor_approval(g, approved_lookup)
-        if "differs" in approval:
-            ap_bg = {"red": 1.0, "green": 0.922, "blue": 0.612}
-            ap_fg = {"red": 0.498, "green": 0.298, "blue": 0.0}
-        elif "Approved" in approval:
-            ap_bg = {"red": 0.776, "green": 0.937, "blue": 0.816}
-            ap_fg = {"red": 0.216, "green": 0.337, "blue": 0.141}
-        else:
-            ap_bg = {"red": 1.0, "green": 0.78, "blue": 0.808}
-            ap_fg = {"red": 0.612, "green": 0.0, "blue": 0.024}
-
-        requests.append({"repeatCell": {
-            "range": {"sheetId": 0, "startRowIndex": row_idx, "endRowIndex": row_idx + 1,
-                      "startColumnIndex": 24, "endColumnIndex": 25},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": ap_bg,
-                "textFormat": {"bold": True, "fontSize": 9, "foregroundColor": ap_fg},
-                "wrapStrategy": "WRAP", "verticalAlignment": "MIDDLE"
-            }},
-            "fields": "userEnteredFormat"
-        }})
-
     sheets_svc.spreadsheets().batchUpdate(
         spreadsheetId=sheet_id, body={"requests": requests}
     ).execute()
 
-    # Set public permission
     drive.permissions().create(
         fileId=sheet_id,
         body={"type": "anyone", "role": "reader"},
         fields="id"
     ).execute()
 
-    return sheet_url
+    return sheet_url, file_name
 
-# ?Ä?Ä?Ä PARSE COMMAND ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-def parse_game_command(text: str) -> tuple[list[str], str]:
-    """
-    ‡∏?∏±‡∏ö‡?‡πâ‡∏≠‡∏Ñ‡∏ß‡∏≤‡∏° ‡πÄ‡∏ä‡?‡∏?'‡∏ó‡∏≥‡πÑ‡?‡∏•‡?‡πÄ‡∏Å‡∏° Golden Empire, Boxing King ‡πÉ‡∏´‡π?PY ‡∏´‡?‡πà‡∏≠‡∏?
-    return (game_names, client_name)
-    """
-    # ‡∏î‡∏∂‡∏á‡?‡∏∑‡?‡∏≠‡∏•‡∏π‡?‡∏Ñ‡?‡∏? ‡∏Ç‡?‡∏≠‡?‡∏ß‡∏≤‡∏°‡∏´‡∏•‡∏±‡∏?'‡πÉ‡∏´‡π? ‡πÅ‡∏•‡∏∞‡?‡πà‡∏≠‡∏?'‡∏´‡?‡πà‡∏≠‡∏? (‡∏´‡∏£‡∏∑‡∏≠‡∏ó‡?‡∏≤‡∏¢‡∏õ‡∏£‡∏∞‡?‡∏¢‡?)
-    client_match = re.search(r'‡πÉ‡∏´‡πâ\s*([^\s]+?)(?:\s+‡∏´‡?‡πà‡∏≠‡∏¢|$)', text, re.IGNORECASE)
+
+def parse_game_command(text):
+    client_match = re.search(r'‡πÉ‡∏´‡πâ\s*([^\s]+?)(?:\s+‡∏´‡∏ô‡πà‡∏≠‡∏¢|$)', text, re.IGNORECASE)
     client_name  = client_match.group(1).strip() if client_match else "CLIENT"
-
-    # ‡∏î‡∏∂‡∏á‡?‡∏∑‡?‡∏≠‡?‡∏Å‡∏°: ‡∏Ç‡?‡∏≠‡?‡∏ß‡∏≤‡∏°‡∏´‡∏•‡∏±‡∏?'‡πÄ‡∏Å‡∏°' ‡πÅ‡∏•‡∏∞‡?‡πà‡∏≠‡∏?'‡πÉ‡∏´‡π?
-    game_section_match = re.search(r'‡πÄ‡∏Å‡∏°\s+(.+?)\s+‡πÉ‡∏´‡π?, text, re.IGNORECASE | re.DOTALL)
+    game_section_match = re.search(r'‡πÄ‡∏Å‡∏°\s+(.+?)\s+‡πÉ‡∏´‡πâ', text, re.IGNORECASE | re.DOTALL)
     if not game_section_match:
         return [], client_name
-
     game_section = game_section_match.group(1)
-    # ‡πÅ‡∏¢‡∏Å‡?‡πâ‡∏ß‡∏?, ‡∏´‡∏£‡∏∑‡∏≠ / ‡∏´‡∏£‡∏∑‡∏≠ ‡πÅ‡∏•‡∏?    raw_games = re.split(r'[,/\n]|‡πÅ‡∏•‡∏∞|and', game_section, flags=re.IGNORECASE)
+    raw_games = re.split(r'[,/\n]|‡πÅ‡∏•‡∏∞|and', game_section, flags=re.IGNORECASE)
     game_names = [g.strip() for g in raw_games if g.strip()]
     return game_names, client_name
 
-def match_games(game_names: list[str], all_games: list[dict]) -> dict:
-    """
-    return {
-      'found': [(name_input, game_dict), ...],
-      'not_found': [name_input, ...],
-      'ambiguous': [(name_input, [game_dict, ...]), ...]
-    }
-    """
+
+def match_games(game_names, all_games):
     result = {"found": [], "not_found": [], "ambiguous": []}
     for name in game_names:
         name_upper = name.upper()
@@ -382,7 +279,6 @@ def match_games(game_names: list[str], all_games: list[dict]) -> dict:
         elif len(exact) > 1:
             result["ambiguous"].append((name, exact))
         else:
-            # fuzzy: contains
             partial = [g for g in all_games if name_upper in g["Name"].upper()]
             if len(partial) == 1:
                 result["found"].append((name, partial[0]))
@@ -392,56 +288,55 @@ def match_games(game_names: list[str], all_games: list[dict]) -> dict:
                 result["not_found"].append(name)
     return result
 
-# ?Ä?Ä?Ä BOT HANDLERS ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
+
 def auth_check(func):
     async def wrapper(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.effective_user.id != ALLOWED_USER_ID:
-            await update.message.reply_text("??‡πÑ‡∏°‡πà‡∏°‡∏µ‡∏™‡∏¥‡?‡∏ò‡∏¥‡πå‡?‡∏ä‡?‡∏á‡∏≤‡∏ô‡?‡∏≠‡?‡∏ô‡∏µ‡πâ‡?‡πà‡∏∞")
+            await update.message.reply_text("Sorry, you are not authorized to use this bot.")
             return ConversationHandler.END
         return await func(update, context)
     wrapper.__name__ = func.__name__
     return wrapper
 
+
 @auth_check
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "?? ‡∏™‡∏ß‡∏±‡∏™‡∏î‡∏µ‡∏Ñ‡?‡∏? ‡∏ö‡∏≠‡∏ó‡?‡∏µ‡?‡∏ä‡?‡∏ß‡∏¢‡∏™‡∏£‡πâ‡∏≤‡∏á‡?‡∏ü‡∏•‡π?PAGCOR Game Parameters ‡πÉ‡∏´‡πâ‡?‡πà‡∏∞\n\n"
-        "?? ‡∏ß‡∏¥‡∏ò‡∏µ‡πÉ‡?‡π?\n"
-        "`‡∏ó‡∏≥‡πÑ‡?‡∏•‡?‡πÄ‡∏Å‡∏° [‡∏ä‡∏∑‡πà‡∏≠‡πÄ‡∏Å‡∏°1], [‡∏ä‡∏∑‡πà‡∏≠‡πÄ‡∏Å‡∏°2] ‡πÉ‡∏´‡π?[‡∏ä‡∏∑‡πà‡∏≠‡∏•‡∏π‡∏Å‡?‡πâ‡∏≤] ‡∏´‡?‡πà‡∏≠‡∏¢`\n\n"
-        "‡∏ï‡∏±‡∏ß‡∏≠‡∏¢‡?‡∏≤‡?:\n"
-        "`‡∏ó‡∏≥‡πÑ‡?‡∏•‡?‡πÄ‡∏Å‡∏° Golden Empire, Boxing King, Mega Ace ‡πÉ‡∏´‡π?PY ‡∏´‡?‡πà‡∏≠‡∏¢`",
+        "Hi! I'm the PAGCOR Game Parameter Bot.\n\n"
+        "How to use:\n"
+        "`‡∏ó‡∏≥‡πÑ‡∏ü‡∏•‡πå‡πÄ‡∏Å‡∏° [game1], [game2] ‡πÉ‡∏´‡πâ [client] ‡∏´‡∏ô‡πà‡∏≠‡∏¢`\n\n"
+        "Example:\n"
+        "`‡∏ó‡∏≥‡πÑ‡∏ü‡∏•‡πå‡πÄ‡∏Å‡∏° Golden Empire, Boxing King ‡πÉ‡∏´‡πâ PY ‡∏´‡∏ô‡πà‡∏≠‡∏¢`",
         parse_mode="Markdown"
     )
+
 
 @auth_check
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip()
 
-    # ‡πÄ‡∏ä‡?‡∏Ñ‡∏ß‡πà‡∏≤‡πÄ‡∏õ‡?‡∏ô‡?‡∏≥‡∏™‡∏±‡?‡∏á‡?‡∏≥‡?‡∏ü‡∏•‡πå‡?‡∏´‡∏°
-    if "‡∏ó‡∏≥‡πÑ‡?‡∏•‡?‡πÄ‡∏Å‡∏°" not in text:
+    if "‡∏ó‡∏≥‡πÑ‡∏ü‡∏•‡πå‡πÄ‡∏Å‡∏°" not in text:
         await update.message.reply_text(
-            "?í° ‡∏û‡∏¥‡∏°‡?‡π?`‡∏ó‡∏≥‡πÑ‡?‡∏•‡?‡πÄ‡∏Å‡∏° [‡∏ä‡∏∑‡πà‡∏≠‡πÄ‡∏Å‡∏°] ‡πÉ‡∏´‡π?[‡∏•‡∏π‡∏Å‡?‡πâ‡∏≤] ‡∏´‡?‡πà‡∏≠‡∏¢` ‡πÄ‡∏û‡∏∑‡πà‡∏≠‡πÄ‡∏?∏¥‡πà‡∏°‡∏ï‡?‡∏ô‡?‡πà‡∏∞",
+            "Please use the format:\n`‡∏ó‡∏≥‡πÑ‡∏ü‡∏•‡πå‡πÄ‡∏Å‡∏° [game] ‡πÉ‡∏´‡πâ [client] ‡∏´‡∏ô‡πà‡∏≠‡∏¢`",
             parse_mode="Markdown"
         )
         return ConversationHandler.END
 
     game_names, client_name = parse_game_command(text)
     if not game_names:
-        await update.message.reply_text("??‡πÑ‡∏°‡πà‡?‡∏ö‡?‡∏∑‡?‡∏≠‡?‡∏Å‡∏°‡πÉ‡?‡∏Ñ‡∏≥‡∏™‡∏±‡πà‡?‡∏Ñ‡?‡∏?‡∏Å‡∏£‡∏∏‡?‡∏≤‡∏•‡∏≠‡?‡πÉ‡∏´‡∏°‡?‡∏ô‡∏∞‡∏Ñ‡∏∞")
+        await update.message.reply_text("Could not find game names in your message. Please try again.")
         return ConversationHandler.END
 
-    await update.message.reply_text("?? ‡∏Å‡∏≥‡∏•‡∏±‡∏á‡?‡∏?∏ß‡∏à‡∏™‡∏≠‡?‡∏?∏≤‡∏¢‡?‡∏∑‡?‡∏≠‡?‡∏Å‡∏°‡∏Ñ‡?‡∏?..")
+    await update.message.reply_text("Checking game list, please wait...")
 
     try:
         sheets_svc, drive = get_google_services()
         all_games = fetch_game_list(sheets_svc)
     except Exception as e:
-        await update.message.reply_text(f"??‡πÄ‡∏ä‡∏∑‡πà‡∏≠‡∏°‡?‡πà‡∏≠ Google API ‡πÑ‡∏°‡πà‡?‡∏î‡?‡∏Ñ‡?‡∏? {e}")
+        await update.message.reply_text(f"Google API connection failed: {e}")
         return ConversationHandler.END
 
     match_result = match_games(game_names, all_games)
-
-    # ‡πÄ‡∏Å‡?‡∏?state ‡πÑ‡∏ß‡πâ‡?‡∏?context
     context.user_data["found"]      = match_result["found"]
     context.user_data["not_found"]  = match_result["not_found"]
     context.user_data["ambiguous"]  = match_result["ambiguous"]
@@ -449,63 +344,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["sheets_svc"] = sheets_svc
     context.user_data["drive"]      = drive
 
-    # Build summary message
-    msg_lines = [f"?? ‡∏ï‡∏£‡∏ß‡?‡∏™‡∏≠‡∏ö‡?‡∏Å‡∏°‡∏™‡∏≥‡∏´‡∏£‡∏±‡?‡∏•‡∏π‡∏Å‡?‡πâ‡∏≤: *{client_name}*\n"]
+    msg_lines = [f"Game check for client: *{client_name}*\n"]
 
     if match_result["found"]:
-        msg_lines.append("??*‡∏û‡?‡πÅ‡∏•‡πâ‡∏ß:*")
-        for name_in, g in match_result["found"]:
-            msg_lines.append(f"  ??{g['Name']} (ID: {g['GameID']})")
+        msg_lines.append("‚úÖ *Found:*")
+        for _, g in match_result["found"]:
+            msg_lines.append(f"  ‚Ä¢ {g['Name']} (ID: {g['GameID']})")
 
     if match_result["not_found"]:
-        msg_lines.append("\n??*‡πÑ‡∏°‡πà‡?‡∏ö‡?‡∏ô‡∏£‡∏∞‡?‡∏?*")
+        msg_lines.append("\n‚ùå *Not found:*")
         for name in match_result["not_found"]:
-            msg_lines.append(f"  ??{name}")
+            msg_lines.append(f"  ‚Ä¢ {name}")
 
     if match_result["ambiguous"]:
-        msg_lines.append("\n?†Ô? *‡∏ä‡∏∑‡πà‡∏≠‡∏ï‡∏£‡∏á‡?‡∏±‡?‡∏´‡∏•‡∏≤‡∏¢‡πÄ‡∏Å‡∏° (‡∏ï‡?‡∏≠‡?‡∏Å‡∏≤‡∏??‡πâ‡∏≠‡∏°‡∏π‡∏•‡?‡∏û‡∏¥‡πà‡∏°‡πÄ‡∏ï‡∏¥‡∏?:*")
+        msg_lines.append("\n‚ö†Ô∏è *Multiple matches found:*")
         for name_in, candidates in match_result["ambiguous"]:
-            msg_lines.append(f"  ??'{name_in}' ‡∏ï‡∏£‡∏á‡?‡∏±‡?:")
+            msg_lines.append(f"  ‚Ä¢ '{name_in}' matches:")
             for c in candidates:
                 msg_lines.append(f"    - {c['Name']} (ID: {c['GameID']})")
 
-    msg_lines.append("\n?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä")
+    msg_lines.append("\n‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ‚îÄ")
+
+    if not match_result["found"]:
+        msg_lines.append("No games found. Please check the names and try again.")
+        await update.message.reply_text("\n".join(msg_lines), parse_mode="Markdown")
+        return ConversationHandler.END
+
+    today = datetime.now().strftime("%Y%m%d")
+    count = len(match_result["found"])
+    file_name = f"{today}_PAGCOR_{client_name}_{count}games"
 
     if match_result["not_found"] or match_result["ambiguous"]:
-        if match_result["found"]:
-            msg_lines.append(
-                "‡∏à‡∏∞‡∏î‡∏≥‡πÄ‡∏ô‡∏¥‡∏ô‡?‡∏≤‡∏£‡∏≠‡∏¢‡πà‡∏≤‡∏á‡?‡∏??‡πà‡∏≠‡∏î‡∏µ‡∏Ñ‡∏∞?\n"
-                "?∂Ô? ‡∏û‡∏¥‡∏°‡?‡π?`‡∏î‡∏≥‡πÄ‡∏ô‡∏¥‡∏ô‡?‡∏≤‡∏£‡∏ï‡?‡∏≠` ??‡∏™‡∏£‡πâ‡∏≤‡∏á‡?‡∏ü‡∏•‡πå‡?‡∏â‡?‡∏≤‡∏∞‡πÄ‡∏Å‡∏°‡∏ó‡∏µ‡πà‡?‡∏ö‡?‡∏•‡?‡∏ß\n"
-                "?èÔ? ‡∏û‡∏¥‡∏°‡?‡πå‡?‡∏∑‡?‡∏≠‡?‡∏Å‡∏°‡πÉ‡∏´‡∏°‡?‡∏ó‡∏µ‡πà‡?‡∏π‡?‡∏ï‡?‡∏≠‡? ??‡πÅ‡?‡πâ‡?‡∏Ç‡?‡∏•‡∏∞‡∏•‡∏≠‡∏á‡?‡∏´‡∏°‡π?
-            )
-        else:
-            msg_lines.append("??‡πÑ‡∏°‡πà‡?‡∏ö‡?‡∏Å‡∏°‡πÉ‡?‡πÄ‡∏•‡∏¢‡∏Ñ‡?‡∏?‡∏Å‡∏£‡∏∏‡?‡∏≤‡?‡∏?∏ß‡∏à‡∏™‡∏≠‡?‡∏ä‡∏∑‡πà‡∏≠‡πÄ‡∏Å‡∏°‡πÅ‡∏•‡πâ‡∏ß‡∏•‡∏≠‡∏á‡?‡∏´‡∏°‡πà‡?‡∏∞‡?‡∏?)
-            await update.message.reply_text("\n".join(msg_lines), parse_mode="Markdown")
-            return ConversationHandler.END
-    else:
-        # ‡∏û‡?‡∏Ñ‡∏£‡∏ö‡?‡∏∏‡?‡πÄ‡∏Å‡∏°
-        count = len(match_result["found"])
-        today = datetime.now().strftime("%Y%m%d")
-        file_name = f"{today}_PAGCOR_{client_name}_{count}games"
         msg_lines.append(
-            f"?? ‡∏ä‡∏∑‡πà‡∏≠‡πÑ‡?‡∏•‡?‡∏ó‡∏µ‡πà‡?‡∏∞‡∏™‡∏??‡∏≤‡?: `{file_name}`\n"
-            f"??‡∏û‡∏£‡πâ‡∏≠‡∏°‡∏™‡∏??‡∏≤‡?‡πÑ‡?‡∏•‡?‡πÑ‡?‡πâ‡?‡∏•‡∏¢‡∏Ñ‡?‡∏?\n\n"
-            "‡∏û‡∏¥‡∏°‡?‡π?`‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡?` ‡πÄ‡∏û‡∏∑‡πà‡∏≠‡∏™‡∏£‡πâ‡∏≤‡∏á‡?‡∏ü‡∏•‡π?‡∏´‡∏£‡∏∑‡∏≠ `‡∏¢‡?‡πÄ‡∏•‡∏¥‡∏Å` ‡πÄ‡∏û‡∏∑‡πà‡∏≠‡∏≠‡∏≠‡∏Å‡?‡πà‡∏∞"
+            "Type `‡∏î‡∏≥‡πÄ‡∏ô‡∏¥‡∏ô‡∏Å‡∏≤‡∏£‡∏ï‡πà‡∏≠` to create file with found games only\n"
+            "Or retype the correct game names to try again."
+        )
+    else:
+        msg_lines.append(
+            f"File name: `{file_name}`\n\n"
+            "Type `‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡∏ô` to create the file, or `‡∏¢‡∏Å‡πÄ‡∏•‡∏¥‡∏Å` to cancel."
         )
 
     await update.message.reply_text("\n".join(msg_lines), parse_mode="Markdown")
     return CONFIRM_GAMES
 
+
 @auth_check
 async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.strip().lower()
 
-    if text in ["‡∏¢‡?‡πÄ‡∏•‡∏¥‡∏?, "cancel"]:
-        await update.message.reply_text("??‡∏¢‡?‡πÄ‡∏•‡∏¥‡∏Å‡?‡∏•‡?‡∏ß‡?‡πà‡∏∞")
+    if text in ["‡∏¢‡∏Å‡πÄ‡∏•‡∏¥‡∏Å", "cancel"]:
+        await update.message.reply_text("Cancelled.")
         return ConversationHandler.END
 
-    if text not in ["‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡?", "confirm", "‡∏î‡∏≥‡πÄ‡∏ô‡∏¥‡∏ô‡?‡∏≤‡∏£‡∏ï‡?‡∏?]:
-        await update.message.reply_text("‡∏Å‡∏£‡∏∏‡?‡∏≤‡?‡∏¥‡∏°‡∏û‡? `‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡?` ‡∏´‡∏£‡∏∑‡∏≠ `‡∏¢‡?‡πÄ‡∏•‡∏¥‡∏Å` ‡∏Ñ‡?‡∏?, parse_mode="Markdown")
+    if text not in ["‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡∏ô", "confirm", "‡∏î‡∏≥‡πÄ‡∏ô‡∏¥‡∏ô‡∏Å‡∏≤‡∏£‡∏ï‡πà‡∏≠"]:
+        await update.message.reply_text("Please type `‡∏¢‡∏∑‡∏ô‡∏¢‡∏±‡∏ô` or `‡∏¢‡∏Å‡πÄ‡∏•‡∏¥‡∏Å`", parse_mode="Markdown")
         return CONFIRM_GAMES
 
     found       = context.user_data.get("found", [])
@@ -514,41 +407,38 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     drive       = context.user_data.get("drive")
 
     if not found:
-        await update.message.reply_text("??‡πÑ‡∏°‡πà‡∏°‡∏µ‡?‡∏Å‡∏°‡∏ó‡∏µ‡πà‡?‡∏∞‡∏™‡∏??‡∏≤‡?‡πÑ‡?‡∏•‡?‡∏Ñ‡?‡∏?)
+        await update.message.reply_text("No games to create file for.")
         return ConversationHandler.END
 
-    await update.message.reply_text("??‡∏Å‡∏≥‡∏•‡∏±‡∏á‡∏™‡∏??‡∏≤‡?‡πÑ‡?‡∏•‡? ‡∏Å‡∏£‡∏∏‡?‡∏≤‡∏£‡∏≠‡∏™‡∏±‡?‡∏Ñ‡∏£‡∏π‡?‡∏ô‡∏∞‡∏Ñ‡∏∞...")
+    await update.message.reply_text("Creating file, please wait...")
 
     try:
         approved_lookup = fetch_pagcor_approved(sheets_svc)
         games_data = [g for _, g in found]
-        sheet_url = build_output_sheet(
+        sheet_url, file_name = build_output_sheet(
             drive, sheets_svc, games_data, client_name, approved_lookup
         )
-        count = len(games_data)
-        today = datetime.now().strftime("%Y%m%d")
-        file_name = f"{today}_PAGCOR_{client_name}_{count}games"
         await update.message.reply_text(
-            f"??‡∏™‡∏£‡πâ‡∏≤‡∏á‡?‡∏ü‡∏•‡πå‡?‡∏™‡∏£‡πá‡?‡πÅ‡∏•‡πâ‡∏ß‡∏Ñ‡?‡∏?\n\n"
-            f"?? *{file_name}*\n"
-            f"?? {sheet_url}",
+            f"File created successfully!\n\n"
+            f"*{file_name}*\n"
+            f"{sheet_url}",
             parse_mode="Markdown"
         )
     except Exception as e:
-        logger.error(f"Error creating sheet: {e}", exc_info=True)
-        await update.message.reply_text(f"??‡πÄ‡∏Å‡∏¥‡∏î‡?‡πâ‡∏≠‡∏ú‡∏¥‡∏î‡?‡∏•‡∏≤‡∏î‡?‡πà‡∏∞: {e}")
+        logger.error(f"Error: {e}", exc_info=True)
+        await update.message.reply_text(f"Error creating file: {e}")
 
     return ConversationHandler.END
+
 
 @auth_check
 async def cancel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("??‡∏¢‡?‡πÄ‡∏•‡∏¥‡∏Å‡?‡∏•‡?‡∏ß‡?‡πà‡∏∞")
+    await update.message.reply_text("Cancelled.")
     return ConversationHandler.END
 
-# ?Ä?Ä?Ä MAIN ?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä?Ä
-async async def main():
-    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
 
+async def main():
+    app = ApplicationBuilder().token(TELEGRAM_TOKEN).build()
     conv_handler = ConversationHandler(
         entry_points=[MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message)],
         states={
@@ -556,14 +446,11 @@ async async def main():
         },
         fallbacks=[CommandHandler("cancel", cancel)],
     )
-
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
-
     logger.info("Bot started...")
     await app.run_polling(drop_pending_updates=True)
 
-import asyncio
 
 if __name__ == "__main__":
     asyncio.run(main())
