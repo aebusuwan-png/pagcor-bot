@@ -36,7 +36,7 @@ def get_google_services():
     creds = service_account.Credentials.from_service_account_info(
         sa_info,
         scopes=[
-            "https://www.googleapis.com/auth/spreadsheets.readonly",
+            "https://www.googleapis.com/auth/spreadsheets",
             "https://www.googleapis.com/auth/drive",
         ]
     )
@@ -142,7 +142,7 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
 
     header_row = [
         "GameID", "Name", "GAME VERSION", "GAME OFFERING", "Game Type",
-        "Min Bet (PHP)", "Max Bet (PHP)", "Max Odds", "Support", "GamePlay",
+        "Min Bet", "Max Bet", "Max Odds", "Support", "GamePlay",
         "Default Bet", "Max Exposure", "RTP",
         "standard deviation (General)", "standard deviation (General)",
         "90.0% Confidence Range", "95.0% Confidence Range", "99.0% Confidence Range",
@@ -162,10 +162,10 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         cert = find_cert_folder(drive, g["Name"], g["GameID"])
         cert_val = cert if cert else "This game has not yet been scheduled for lab certification"
 
-        min_bet = f"₱{g['Min_Bet']}" if g["Min_Bet"] else ""
-        max_bet = f"₱{g['Max_Bet']}" if g["Max_Bet"] else ""
-        def_bet = f"₱{g['Default_Bet']}" if g["Default_Bet"] else ""
-        max_exp = f"₱{g['Max_Exposure']}" if g["Max_Exposure"] else ""
+        min_bet = str(g["Min_Bet"]) if g["Min_Bet"] else ""
+        max_bet = str(g["Max_Bet"]) if g["Max_Bet"] else ""
+        def_bet = str(g["Default_Bet"]) if g["Default_Bet"] else ""
+        max_exp = str(g["Max_Exposure"]) if g["Max_Exposure"] else ""
 
         row = [
             g["GameID"], g["Name"], g["GAME_VERSION"], g["GAME_OFFERING"], g["Game_Type"],
@@ -209,13 +209,12 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     # Transfer ownership to jaaeofficial@jiligames.com
     # Add title row + formatting via Sheets API
     try:
-        sheets_svc2 = build("sheets", "v4", credentials=drive._http.credentials)
-        
+        sheets_svc2 = sheets_svc
+
         # Insert title row at top
         sheets_svc2.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [
-                # Insert blank row at top for title
                 {"insertDimension": {
                     "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
                     "inheritFromBefore": False
