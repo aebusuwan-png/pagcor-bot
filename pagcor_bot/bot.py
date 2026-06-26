@@ -134,25 +134,12 @@ def check_pagcor_approval(game, approved_lookup):
 
 
 def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_lookup):
+    import io, csv
+    from googleapiclient.http import MediaIoBaseUpload
     today = datetime.now().strftime("%Y%m%d")
     count = len(games_data)
     file_name = f"{today}_PAGCOR_{client_name}_{count}games"
 
-    sheet_body = {"properties": {"title": file_name}}
-    created = sheets_svc.spreadsheets().create(body=sheet_body).execute()
-    sheet_id  = created["spreadsheetId"]
-    sheet_url = created["spreadsheetUrl"]
-
-    file_meta = drive.files().get(fileId=sheet_id, fields="parents").execute()
-    prev_parents = ",".join(file_meta.get("parents", []))
-    drive.files().update(
-        fileId=sheet_id,
-        addParents=OUTPUT_FOLDER_ID,
-        removeParents=prev_parents,
-        fields="id,parents"
-    ).execute()
-
-    title_row  = ["JILI Games: PAGCOR Game Parameter and RTP Details"] + [""] * 26
     header_row = [
         "GameID", "Name", "GAME VERSION", "GAME OFFERING", "Game Type",
         "Min Bet (PHP)", "Max Bet (PHP)", "Max Odds", "Support", "GamePlay",
@@ -193,60 +180,30 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         ]
         data_rows.append(row)
 
-    all_rows = [title_row, header_row] + data_rows
-    sheets_svc.spreadsheets().values().update(
-        spreadsheetId=sheet_id,
-        range="Sheet1!A1",
-        valueInputOption="RAW",
-        body={"values": all_rows}
+    output = io.StringIO()
+    writer = csv.writer(output)
+    writer.writerow(header_row)
+    writer.writerows(data_rows)
+    csv_bytes = output.getvalue().encode("utf-8")
+
+    media = MediaIoBaseUpload(
+        io.BytesIO(csv_bytes),
+        mimetype="text/csv",
+        resumable=False
+    )
+    file_meta = {
+        "name": file_name,
+        "mimeType": "application/vnd.google-apps.spreadsheet",
+        "parents": [OUTPUT_FOLDER_ID],
+    }
+    created = drive.files().create(
+        body=file_meta,
+        media_body=media,
+        fields="id,webViewLink"
     ).execute()
 
-    requests = [
-        {"mergeCells": {
-            "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
-                      "startColumnIndex": 0, "endColumnIndex": 27},
-            "mergeType": "MERGE_ALL"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
-                      "startColumnIndex": 0, "endColumnIndex": 27},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": {"red": 0.051, "green": 0.231, "blue": 0.431},
-                "textFormat": {"bold": True, "fontSize": 11,
-                               "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
-                "verticalAlignment": "MIDDLE"
-            }},
-            "fields": "userEnteredFormat"
-        }},
-        {"repeatCell": {
-            "range": {"sheetId": 0, "startRowIndex": 1, "endRowIndex": 2,
-                      "startColumnIndex": 0, "endColumnIndex": 27},
-            "cell": {"userEnteredFormat": {
-                "backgroundColor": {"red": 0.122, "green": 0.306, "blue": 0.475},
-                "textFormat": {"bold": True, "fontSize": 9,
-                               "foregroundColor": {"red": 1, "green": 1, "blue": 1}},
-                "horizontalAlignment": "CENTER",
-                "verticalAlignment": "MIDDLE",
-                "wrapStrategy": "WRAP"
-            }},
-            "fields": "userEnteredFormat"
-        }},
-        {"updateSheetProperties": {
-            "properties": {"sheetId": 0, "gridProperties": {"frozenRowCount": 2}},
-            "fields": "gridProperties.frozenRowCount"
-        }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
-            "properties": {"pixelSize": 160}, "fields": "pixelSize"
-        }},
-        {"updateDimensionProperties": {
-            "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 27},
-            "properties": {"pixelSize": 350}, "fields": "pixelSize"
-        }},
-    ]
-    sheets_svc.spreadsheets().batchUpdate(
-        spreadsheetId=sheet_id, body={"requests": requests}
-    ).execute()
+    sheet_id  = created["id"]
+    sheet_url = created["webViewLink"]
 
     drive.permissions().create(
         fileId=sheet_id,
@@ -255,7 +212,6 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     ).execute()
 
     return sheet_url, file_name
-
 
 def parse_game_command(text):
     client_match = re.search(r'ให้\s*([^\s]+?)(?:\s+หน่อย|$)', text, re.IGNORECASE)
