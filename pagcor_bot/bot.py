@@ -199,29 +199,20 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     created = drive.files().create(
         body=file_meta,
         media_body=media,
-        fields="id,webViewLink"
+        fields="id,webViewLink",
+        supportsAllDrives=True
     ).execute()
 
     sheet_id  = created["id"]
     sheet_url = created["webViewLink"]
 
     # Transfer ownership to jaaeofficial@jiligames.com
-    drive.permissions().create(
-        fileId=sheet_id,
-        body={
-            "type": "user",
-            "role": "owner",
-            "emailAddress": "jaaeofficial@jiligames.com"
-        },
-        transferOwnership=True,
-        fields="id"
-    ).execute()
-
     # Set public permission
     drive.permissions().create(
         fileId=sheet_id,
         body={"type": "anyone", "role": "reader"},
-        fields="id"
+        fields="id",
+        supportsAllDrives=True
     ).execute()
 
     return sheet_url, file_name
