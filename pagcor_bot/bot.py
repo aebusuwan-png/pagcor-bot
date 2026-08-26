@@ -102,11 +102,22 @@ def list_drive_folder(drive, folder_id):
 def find_instruction_file(drive, game_name, game_id):
     name_upper = game_name.strip().upper()
     id_str = str(game_id).strip()
+    keywords = [w for w in name_upper.split() if len(w) > 2]
+
     for folder_id in INSTRUCTION_FOLDERS:
         for f in list_drive_folder(drive, folder_id):
             title = f["name"].upper()
-            if name_upper in title or id_str in title:
+            # 1. Match by Game ID
+            if id_str in title:
                 return f["webViewLink"]
+            # 2. Match by full name
+            if name_upper in title:
+                return f["webViewLink"]
+            # 3. Fuzzy: at least 2 keywords must match
+            if keywords:
+                matches = sum(1 for kw in keywords if kw in title)
+                if matches >= min(2, len(keywords)):
+                    return f["webViewLink"]
     return None
 
 
