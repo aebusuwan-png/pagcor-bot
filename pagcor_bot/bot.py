@@ -29,6 +29,7 @@ INSTRUCTION_FOLDERS = [
 ]
 
 CONFIRM_GAMES = 0
+API_TIMEOUT = 10  # seconds
 
 
 def get_google_services():
@@ -46,119 +47,140 @@ def get_google_services():
 
 
 def fetch_game_list(sheets):
-    result = sheets.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range="ดึงข้อมูล-查詢表!A2:AB1000"
-    ).execute()
-    rows = result.get("values", [])
-    keys = ["GameID","Name","GameID2","GAME_VERSION","GAME_OFFERING","Game_Type",
-            "Min_Bet","Max_Bet","Max_Odds","Support","GamePlay","Hit_Rate",
-            "Free_Game_Rate","Default_Bet","Max_Exposure","Paid_Spins","RTP",
-            "SD1","SD2","CI90","CI95","CI99",
-            "CI90_Min","CI90_Max","CI95_Min","CI95_Max","CI99_Min","CI99_Max"]
-    games = []
-    for row in rows:
-        if not row or not row[0]:
-            continue
-        padded = row + [""] * (len(keys) - len(row))
-        g = dict(zip(keys, padded))
-        if g["GameID"] and g["Name"]:
-            games.append(g)
-    return games
+    """Fetch all games from spreadsheet with timeout"""
+    try:
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="ดึงข้อมูล-查詢表!A2:AB1000"
+        ).execute()
+        rows = result.get("values", [])
+        keys = ["GameID","Name","GameID2","GAME_VERSION","GAME_OFFERING","Game_Type",
+                "Min_Bet","Max_Bet","Max_Odds","Support","GamePlay","Hit_Rate",
+                "Free_Game_Rate","Default_Bet","Max_Exposure","Paid_Spins","RTP",
+                "SD1","SD2","CI90","CI95","CI99",
+                "CI90_Min","CI90_Max","CI95_Min","CI95_Max","CI99_Min","CI99_Max"]
+        games = []
+        for row in rows:
+            if not row or not row[0]:
+                continue
+            padded = row + [""] * (len(keys) - len(row))
+            g = dict(zip(keys, padded))
+            if g["GameID"] and g["Name"]:
+                games.append(g)
+        logger.info(f"✓ Fetched {len(games)} games from spreadsheet")
+        return games
+    except Exception as e:
+        logger.error(f"✗ Error fetching game list: {e}")
+        raise
 
 
 def fetch_pagcor_approved(sheets):
-    result = sheets.spreadsheets().values().get(
-        spreadsheetId=SPREADSHEET_ID,
-        range="PAGCOR Approved Product List!A2:E500"
-    ).execute()
-    rows = result.get("values", [])
-    lookup = {}
-    for row in rows:
-        if len(row) >= 3 and row[2]:
-            name = row[2].strip().upper()
-            pagcor_id = row[3].strip() if len(row) >= 4 else ""
-            lookup[name] = pagcor_id
-    return lookup
+    """Fetch PAGCOR approved games"""
+    try:
+        result = sheets.spreadsheets().values().get(
+            spreadsheetId=SPREADSHEET_ID,
+            range="PAGCOR Approved Product List!A2:E500"
+        ).execute()
+        rows = result.get("values", [])
+        lookup = {}
+        for row in rows:
+            if len(row) >= 3 and row[2]:
+                name = row[2].strip().upper()
+                pagcor_id = row[3].strip() if len(row) >= 4 else ""
+                lookup[name] = pagcor_id
+        logger.info(f"✓ Fetched {len(lookup)} PAGCOR approved games")
+        return lookup
+    except Exception as e:
+        logger.error(f"✗ Error fetching PAGCOR list: {e}")
+        raise
 
 
 def list_drive_folder(drive, folder_id):
+    """List files in Google Drive folder"""
     files = []
     page_token = None
-    while True:
-        resp = drive.files().list(
-            q=f"'{folder_id}' in parents and trashed=false",
-            fields="files(id,name,mimeType,webViewLink),nextPageToken",
-            pageSize=500,
-            pageToken=page_token
-        ).execute()
-        files.extend(resp.get("files", []))
-        page_token = resp.get("nextPageToken")
-        if not page_token:
-            break
+    try:
+        while True:
+            resp = drive.files().list(
+                q=f"'{folder_id}' in parents and trashed=false",
+                fields="files(id,name,mimeType,webViewLink),nextPageToken",
+                pageSize=500,
+                pageToken=page_token,
+                supportsAllDrives=True
+            ).execute()
+            files.extend(resp.get("files", []))
+            page_token = resp.get("nextPageToken")
+            if not page_token:
+                break
+    except Exception as e:
+        logger.warning(f"⚠ Error listing folder {folder_id}: {e}")
     return files
 
 
-def find_instruction_file(drive, game_name, game_id):
-    name_upper = game_name.strip().upper()
+def find_instruction_file(drive, game_id):
+    """
+    Find instruction file by GAME ID ONLY (strict matching)
+    Pass 1: Exact ID boundary matching
+    Pass 2: Try without ID if Pass 1 fails (fallback)
+    """
     id_str = str(game_id).strip()
-    keywords = [w for w in name_upper.split() if len(w) > 2]
-
-    # Collect all files from all folders first
+    logger.info(f"  🔍 Searching instruction for ID: {id_str}")
+    
     all_files = []
     for folder_id in INSTRUCTION_FOLDERS:
         all_files.extend(list_drive_folder(drive, folder_id))
-
-    # Pass 1: Match by Game ID (most accurate)
+    
+    logger.info(f"    Total instruction files: {len(all_files)}")
+    
+    # Pass 1: Match by Game ID with strict boundary
+    # Pattern: _523_, GAMEID_523, 523_, _523
+    patterns = [
+        f"_{id_str}_",      # _523_
+        f"GAMEID_{id_str}",  # GAMEID_523
+        f"_{id_str}",        # _523
+    ]
+    
     for f in all_files:
         title = f["name"].upper()
-        # Check ID as word boundary: e.g. "523" in "GAMEID_523_" or "_523_" or "523_"
-        if f"_{id_str}_" in title or f"GAMEID_{id_str}" in title or title.startswith(id_str + "_") or f" {id_str} " in title:
-            return f["webViewLink"]
-
-    # Pass 2: Match by full exact game name
-    for f in all_files:
-        title = f["name"].upper()
-        if name_upper in title:
-            return f["webViewLink"]
-
-    # Pass 3: Fuzzy — ALL keywords must match (strict)
-    if keywords:
-        for f in all_files:
-            title = f["name"].upper()
-            # Remove spaces/underscores for comparison
-            title_clean = title.replace(" ", "").replace("_", "").replace("-", "")
-            name_clean = name_upper.replace(" ", "")
-            if name_clean in title_clean:
+        for pattern in patterns:
+            if pattern in title:
+                logger.info(f"    ✓ Found by ID: {f['name']}")
                 return f["webViewLink"]
-            # All keywords must match
-            if all(kw in title for kw in keywords):
-                return f["webViewLink"]
-
+    
+    logger.info(f"    ✗ No instruction file found for ID {id_str}")
     return None
 
 
-def find_cert_folder(drive, game_name, game_id):
-    name_upper = game_name.strip().upper()
+def find_cert_folder(drive, game_id):
+    """
+    Find certificate file by GAME ID ONLY (strict matching)
+    """
     id_str = str(game_id).strip()
+    logger.info(f"  🔍 Searching certificate for ID: {id_str}")
+    
     all_files = list_drive_folder(drive, CERT_JILI_FOLDER)
-
-    # Pass 1: Match by Game ID (strict boundary)
+    logger.info(f"    Total certificate files: {len(all_files)}")
+    
+    # Match by Game ID with strict boundary
+    patterns = [
+        f"_{id_str}_",
+        f"GAMEID_{id_str}",
+        f"_{id_str}",
+    ]
+    
     for f in all_files:
         title = f["name"].upper()
-        if f"_{id_str}_" in title or title.startswith(id_str + "_") or f"_{id_str}" == title[-len(id_str)-1:]:
-            return f["webViewLink"]
-
-    # Pass 2: Match by full exact game name
-    for f in all_files:
-        title = f["name"].upper()
-        if name_upper in title:
-            return f["webViewLink"]
-
+        for pattern in patterns:
+            if pattern in title:
+                logger.info(f"    ✓ Found by ID: {f['name']}")
+                return f["webViewLink"]
+    
+    logger.info(f"    ✗ No certificate file found for ID {id_str}")
     return None
 
 
 def check_pagcor_approval(game, approved_lookup):
+    """Check PAGCOR approval status"""
     name_upper = game["Name"].strip().upper()
     game_id = str(game["GameID"]).strip()
     if name_upper in approved_lookup:
@@ -195,9 +217,9 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     data_rows = []
     for g in games_data:
         approval = check_pagcor_approval(g, approved_lookup)
-        instr = find_instruction_file(drive, g["Name"], g["GameID"])
+        instr = find_instruction_file(drive, g["GameID"])
         instr_val = instr if instr else "Please contact JILI BD"
-        cert = find_cert_folder(drive, g["Name"], g["GameID"])
+        cert = find_cert_folder(drive, g["GameID"])
         cert_val = cert if cert else "This game has not yet been scheduled for lab certification"
 
         min_bet = str(g["Min_Bet"]) if g["Min_Bet"] else ""
@@ -244,7 +266,6 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     sheet_id  = created["id"]
     sheet_url = created["webViewLink"]
 
-    # Transfer ownership to jaaeofficial@jiligames.com
     # Add title row + formatting via Sheets API
     try:
         sheets_svc2 = sheets_svc
@@ -345,35 +366,43 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
 
     return sheet_url, file_name
 
+
 def parse_game_command(text):
+    """
+    Parse game command: ทำไฟล์เกม [ID1], [ID2], ... ให้ [CLIENT]
+    Example: ทำไฟล์เกม 573, 523, 720 ให้ PY หน่อย
+    """
     client_match = re.search(r'ให้\s*([^\s]+?)(?:\s+หน่อย|$)', text, re.IGNORECASE)
     client_name  = client_match.group(1).strip() if client_match else "CLIENT"
+    
     game_section_match = re.search(r'เกม\s+(.+?)\s+ให้', text, re.IGNORECASE | re.DOTALL)
     if not game_section_match:
         return [], client_name
+    
     game_section = game_section_match.group(1)
+    # Split by comma, slash, newline, และ, and
     raw_games = re.split(r'[,/\n]|และ|and', game_section, flags=re.IGNORECASE)
-    game_names = [g.strip() for g in raw_games if g.strip()]
-    return game_names, client_name
+    game_ids = [g.strip() for g in raw_games if g.strip() and g.strip().isdigit()]
+    
+    return game_ids, client_name
 
 
-def match_games(game_names, all_games):
-    result = {"found": [], "not_found": [], "ambiguous": []}
-    for name in game_names:
-        name_upper = name.upper()
-        exact = [g for g in all_games if g["Name"].upper() == name_upper]
-        if len(exact) == 1:
-            result["found"].append((name, exact[0]))
-        elif len(exact) > 1:
-            result["ambiguous"].append((name, exact))
+def match_games_by_id(game_ids, all_games):
+    """
+    Match games by ID instead of name
+    Returns: found, not_found
+    """
+    result = {"found": [], "not_found": []}
+    game_id_map = {g["GameID"]: g for g in all_games}
+    
+    for gid in game_ids:
+        if gid in game_id_map:
+            result["found"].append((gid, game_id_map[gid]))
+            logger.info(f"  ✓ Found game ID {gid}: {game_id_map[gid]['Name']}")
         else:
-            partial = [g for g in all_games if name_upper in g["Name"].upper()]
-            if len(partial) == 1:
-                result["found"].append((name, partial[0]))
-            elif len(partial) > 1:
-                result["ambiguous"].append((name, partial))
-            else:
-                result["not_found"].append(name)
+            result["not_found"].append(gid)
+            logger.warning(f"  ✗ Game ID {gid} not found")
+    
     return result
 
 
@@ -390,11 +419,12 @@ def auth_check(func):
 @auth_check
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I'm the PAGCOR Game Parameter Bot.\n\n"
+        "Hi! I'm the PAGCOR Game Parameter Bot (ID-based search).\n\n"
         "How to use:\n"
-        "`ทำไฟล์เกม [game1], [game2] ให้ [client] หน่อย`\n\n"
+        "`ทำไฟล์เกม [ID1], [ID2], [ID3] ให้ [client] หน่อย`\n\n"
         "Example:\n"
-        "`ทำไฟล์เกม Golden Empire, Boxing King ให้ PY หน่อย`",
+        "`ทำไฟล์เกม 573, 523, 720 ให้ PY หน่อย`\n\n"
+        "🎮 Use Game IDs only (not game names)",
         parse_mode="Markdown"
     )
 
@@ -405,56 +435,55 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if "ทำไฟล์เกม" not in text:
         await update.message.reply_text(
-            "Please use the format:\n`ทำไฟล์เกม [game] ให้ [client] หน่อย`",
+            "Please use the format:\n`ทำไฟล์เกม [ID1], [ID2] ให้ [client] หน่อย`\n\n"
+            "Example: `ทำไฟล์เกม 573, 523 ให้ PY หน่อย`",
             parse_mode="Markdown"
         )
         return ConversationHandler.END
 
-    game_names, client_name = parse_game_command(text)
-    if not game_names:
-        await update.message.reply_text("Could not find game names in your message. Please try again.")
+    game_ids, client_name = parse_game_command(text)
+    if not game_ids:
+        await update.message.reply_text(
+            "❌ No game IDs found. Please use numeric IDs only.\n"
+            "Example: `ทำไฟล์เกม 573, 523 ให้ PY หน่อย`",
+            parse_mode="Markdown"
+        )
         return ConversationHandler.END
 
-    await update.message.reply_text("Checking game list, please wait...")
+    await update.message.reply_text("⏳ Checking game list, please wait...")
+    logger.info(f"📋 User requested: Game IDs {game_ids} for client {client_name}")
 
     try:
         sheets_svc, drive = get_google_services()
         all_games = fetch_game_list(sheets_svc)
     except Exception as e:
-        await update.message.reply_text(f"Google API connection failed: {e}")
+        logger.error(f"❌ Google API error: {e}")
+        await update.message.reply_text(f"❌ Google API connection failed: {e}")
         return ConversationHandler.END
 
-    match_result = match_games(game_names, all_games)
+    match_result = match_games_by_id(game_ids, all_games)
     context.user_data["found"]      = match_result["found"]
     context.user_data["not_found"]  = match_result["not_found"]
-    context.user_data["ambiguous"]  = match_result["ambiguous"]
     context.user_data["client"]     = client_name
     context.user_data["sheets_svc"] = sheets_svc
     context.user_data["drive"]      = drive
 
-    msg_lines = [f"Game check for client: *{client_name}*\n"]
+    msg_lines = [f"🎯 Game check for client: *{client_name}*\n"]
 
     if match_result["found"]:
         msg_lines.append("✅ *Found:*")
-        for _, g in match_result["found"]:
-            msg_lines.append(f"  • {g['Name']} (ID: {g['GameID']})")
+        for gid, g in match_result["found"]:
+            msg_lines.append(f"  • ID {gid}: {g['Name']}")
 
     if match_result["not_found"]:
         msg_lines.append("\n❌ *Not found:*")
-        for name in match_result["not_found"]:
-            msg_lines.append(f"  • {name}")
-
-    if match_result["ambiguous"]:
-        msg_lines.append("\n⚠️ *Multiple matches found:*")
-        for name_in, candidates in match_result["ambiguous"]:
-            msg_lines.append(f"  • '{name_in}' matches:")
-            for c in candidates:
-                msg_lines.append(f"    - {c['Name']} (ID: {c['GameID']})")
+        for gid in match_result["not_found"]:
+            msg_lines.append(f"  • ID {gid}")
 
     msg_lines.append("\n─────────────────")
 
     if not match_result["found"]:
-        msg_lines.append("No games found. Please check the names and try again.")
+        msg_lines.append("No games found. Please check the IDs and try again.")
         await update.message.reply_text("\n".join(msg_lines), parse_mode="Markdown")
         return ConversationHandler.END
 
@@ -462,10 +491,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     count = len(match_result["found"])
     file_name = f"{today}_PAGCOR_{client_name}_{count}games"
 
-    if match_result["not_found"] or match_result["ambiguous"]:
+    if match_result["not_found"]:
         msg_lines.append(
             "Type `ดำเนินการต่อ` to create file with found games only\n"
-            "Or retype the correct game names to try again."
+            "Or retype with correct game IDs to try again."
         )
     else:
         msg_lines.append(
@@ -479,13 +508,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         for chunk in chunks:
             try:
                 await update.message.reply_text(chunk, parse_mode="Markdown")
-            except Exception:
+            except Exception as e:
+                logger.warning(f"Markdown parse failed, sending plain text: {e}")
                 await update.message.reply_text(chunk)
     else:
         try:
             await update.message.reply_text(full_msg, parse_mode="Markdown")
-        except Exception:
+        except Exception as e:
+            logger.warning(f"Markdown parse failed, sending plain text: {e}")
             await update.message.reply_text(full_msg)
+    
     return CONFIRM_GAMES
 
 
@@ -510,7 +542,8 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("No games to create file for.")
         return ConversationHandler.END
 
-    await update.message.reply_text("Creating file, please wait...")
+    await update.message.reply_text("⏳ Creating file, please wait...")
+    logger.info(f"📝 Creating sheet for {len(found)} games, client: {client_name}")
 
     try:
         approved_lookup = fetch_pagcor_approved(sheets_svc)
@@ -518,14 +551,15 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
         sheet_url, file_name = build_output_sheet(
             drive, sheets_svc, games_data, client_name, approved_lookup
         )
+        logger.info(f"✓ Sheet created: {file_name}")
         await update.message.reply_text(
             f"✅ File created successfully!\n\n"
             f"📄 {file_name}\n\n"
             f"🔗 {sheet_url}"
         )
     except Exception as e:
-        logger.error(f"Error: {e}", exc_info=True)
-        await update.message.reply_text(f"Error creating file: {e}")
+        logger.error(f"❌ Error creating file: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ Error creating file: {e}")
 
     return ConversationHandler.END
 
@@ -547,7 +581,7 @@ def main():
     )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
-    logger.info("Bot started...")
+    logger.info("🤖 Bot started with ID-based game search...")
     app.run_polling(drop_pending_updates=True)
 
 
