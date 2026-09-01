@@ -135,6 +135,8 @@ def find_instruction_file(drive, game_id):
     # Pass 1: Match by Game ID with strict boundary
     # Pattern: _523_, GAMEID_523, 523_, _523
     patterns = [
+        f"{id_str}_",       # 300_
+        f"GAMEID_{id_str}_", # GAMEID_300_
         f"_{id_str}_",      # _523_
         f"GAMEID_{id_str}",  # GAMEID_523
         f"_{id_str}",        # _523
@@ -163,6 +165,8 @@ def find_cert_folder(drive, game_id):
     
     # Match by Game ID with strict boundary
     patterns = [
+        f"{id_str}_",       # 300_
+        f"GAMEID_{id_str}_", # GAMEID_300_
         f"_{id_str}_",
         f"GAMEID_{id_str}",
         f"_{id_str}",
