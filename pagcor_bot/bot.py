@@ -104,30 +104,57 @@ def find_instruction_file(drive, game_name, game_id):
     id_str = str(game_id).strip()
     keywords = [w for w in name_upper.split() if len(w) > 2]
 
+    # Collect all files from all folders first
+    all_files = []
     for folder_id in INSTRUCTION_FOLDERS:
-        for f in list_drive_folder(drive, folder_id):
+        all_files.extend(list_drive_folder(drive, folder_id))
+
+    # Pass 1: Match by Game ID (most accurate)
+    for f in all_files:
+        title = f["name"].upper()
+        # Check ID as word boundary: e.g. "523" in "GAMEID_523_" or "_523_" or "523_"
+        if f"_{id_str}_" in title or f"GAMEID_{id_str}" in title or title.startswith(id_str + "_") or f" {id_str} " in title:
+            return f["webViewLink"]
+
+    # Pass 2: Match by full exact game name
+    for f in all_files:
+        title = f["name"].upper()
+        if name_upper in title:
+            return f["webViewLink"]
+
+    # Pass 3: Fuzzy — ALL keywords must match (strict)
+    if keywords:
+        for f in all_files:
             title = f["name"].upper()
-            # 1. Match by Game ID
-            if id_str in title:
+            # Remove spaces/underscores for comparison
+            title_clean = title.replace(" ", "").replace("_", "").replace("-", "")
+            name_clean = name_upper.replace(" ", "")
+            if name_clean in title_clean:
                 return f["webViewLink"]
-            # 2. Match by full name
-            if name_upper in title:
+            # All keywords must match
+            if all(kw in title for kw in keywords):
                 return f["webViewLink"]
-            # 3. Fuzzy: at least 2 keywords must match
-            if keywords:
-                matches = sum(1 for kw in keywords if kw in title)
-                if matches >= min(2, len(keywords)):
-                    return f["webViewLink"]
+
     return None
 
 
 def find_cert_folder(drive, game_name, game_id):
     name_upper = game_name.strip().upper()
     id_str = str(game_id).strip()
-    for f in list_drive_folder(drive, CERT_JILI_FOLDER):
+    all_files = list_drive_folder(drive, CERT_JILI_FOLDER)
+
+    # Pass 1: Match by Game ID (strict boundary)
+    for f in all_files:
         title = f["name"].upper()
-        if name_upper in title or id_str in title:
+        if f"_{id_str}_" in title or title.startswith(id_str + "_") or f"_{id_str}" == title[-len(id_str)-1:]:
             return f["webViewLink"]
+
+    # Pass 2: Match by full exact game name
+    for f in all_files:
+        title = f["name"].upper()
+        if name_upper in title:
+            return f["webViewLink"]
+
     return None
 
 
@@ -446,7 +473,19 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "Type `ยืนยัน` to create the file, or `ยกเลิก` to cancel."
         )
 
-    await update.message.reply_text("\n".join(msg_lines), parse_mode="Markdown")
+    full_msg = "\n".join(msg_lines)
+    if len(full_msg) > 4000:
+        chunks = [full_msg[i:i+4000] for i in range(0, len(full_msg), 4000)]
+        for chunk in chunks:
+            try:
+                await update.message.reply_text(chunk, parse_mode="Markdown")
+            except Exception:
+                await update.message.reply_text(chunk)
+    else:
+        try:
+            await update.message.reply_text(full_msg, parse_mode="Markdown")
+        except Exception:
+            await update.message.reply_text(full_msg)
     return CONFIRM_GAMES
 
 
