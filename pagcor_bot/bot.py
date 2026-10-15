@@ -307,12 +307,20 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
     try:
         sheets_svc2 = sheets_svc
 
+        # CSV import names the tab after the file (not "Sheet1") and the tab id
+        # is not always 0 -> read the real id/title first
+        meta = sheets_svc2.spreadsheets().get(
+            spreadsheetId=sheet_id, fields="sheets.properties(sheetId,title)"
+        ).execute()
+        tab = meta["sheets"][0]["properties"]
+        tab_id, tab_title = tab["sheetId"], tab["title"]
+
         # Insert title row at top
         sheets_svc2.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id,
             body={"requests": [
                 {"insertDimension": {
-                    "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                    "range": {"sheetId": tab_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
                     "inheritFromBefore": False
                 }}
             ]}
@@ -321,7 +329,7 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         # Write title
         sheets_svc2.spreadsheets().values().update(
             spreadsheetId=sheet_id,
-            range="Sheet1!A1",
+            range=f"'{tab_title}'!A1",
             valueInputOption="RAW",
             body={"values": [["JILI Games: PAGCOR Game Parameter and RTP Details"]]}
         ).execute()
@@ -330,13 +338,13 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         requests = [
             # Merge title row
             {"mergeCells": {
-                "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
+                "range": {"sheetId": tab_id, "startRowIndex": 0, "endRowIndex": 1,
                           "startColumnIndex": 0, "endColumnIndex": num_cols},
                 "mergeType": "MERGE_ALL"
             }},
             # Title style
             {"repeatCell": {
-                "range": {"sheetId": 0, "startRowIndex": 0, "endRowIndex": 1,
+                "range": {"sheetId": tab_id, "startRowIndex": 0, "endRowIndex": 1,
                           "startColumnIndex": 0, "endColumnIndex": num_cols},
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": {"red": 0.051, "green": 0.231, "blue": 0.431},
@@ -349,7 +357,7 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
             }},
             # Header row style
             {"repeatCell": {
-                "range": {"sheetId": 0, "startRowIndex": 1, "endRowIndex": 2,
+                "range": {"sheetId": tab_id, "startRowIndex": 1, "endRowIndex": 2,
                           "startColumnIndex": 0, "endColumnIndex": num_cols},
                 "cell": {"userEnteredFormat": {
                     "backgroundColor": {"red": 0.122, "green": 0.306, "blue": 0.475},
@@ -363,27 +371,27 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
             }},
             # Freeze top 2 rows
             {"updateSheetProperties": {
-                "properties": {"sheetId": 0, "gridProperties": {"frozenRowCount": 2}},
+                "properties": {"sheetId": tab_id, "gridProperties": {"frozenRowCount": 2}},
                 "fields": "gridProperties.frozenRowCount"
             }},
             # Title row height
             {"updateDimensionProperties": {
-                "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
+                "range": {"sheetId": tab_id, "dimension": "ROWS", "startIndex": 0, "endIndex": 1},
                 "properties": {"pixelSize": 30}, "fields": "pixelSize"
             }},
             # Header row height
             {"updateDimensionProperties": {
-                "range": {"sheetId": 0, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
+                "range": {"sheetId": tab_id, "dimension": "ROWS", "startIndex": 1, "endIndex": 2},
                 "properties": {"pixelSize": 45}, "fields": "pixelSize"
             }},
             # Name column width
             {"updateDimensionProperties": {
-                "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
+                "range": {"sheetId": tab_id, "dimension": "COLUMNS", "startIndex": 1, "endIndex": 2},
                 "properties": {"pixelSize": 160}, "fields": "pixelSize"
             }},
             # Last 3 columns width
             {"updateDimensionProperties": {
-                "range": {"sheetId": 0, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 27},
+                "range": {"sheetId": tab_id, "dimension": "COLUMNS", "startIndex": 24, "endIndex": 27},
                 "properties": {"pixelSize": 300}, "fields": "pixelSize"
             }},
         ]
