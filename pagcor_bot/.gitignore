@@ -3,3 +3,6 @@ service_account.json
 __pycache__/
 *.pyc
 .DS_Store
+
+*.bak_*
+__pycache__/

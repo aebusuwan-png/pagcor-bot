@@ -95,92 +95,123 @@ def fetch_pagcor_approved(sheets):
         raise
 
 
-def list_drive_folder(drive, folder_id):
-    """List files in Google Drive folder"""
-    files = []
-    page_token = None
-    try:
-        while True:
-            resp = drive.files().list(
-                q=f"'{folder_id}' in parents and trashed=false",
-                fields="files(id,name,mimeType,webViewLink),nextPageToken",
-                pageSize=500,
-                pageToken=page_token,
-                supportsAllDrives=True
-            ).execute()
-            files.extend(resp.get("files", []))
-            page_token = resp.get("nextPageToken")
-            if not page_token:
-                break
-    except Exception as e:
-        logger.warning(f"⚠ Error listing folder {folder_id}: {e}")
-    return files
+def list_drive_folder(drive, folder_id, retries=3):
+    """List files in Google Drive folder (retries on Google-side 5xx errors)"""
+    import time
+    for attempt in range(1, retries + 1):
+        files = []
+        page_token = None
+        try:
+            while True:
+                resp = drive.files().list(
+                    q=f"'{folder_id}' in parents and trashed=false",
+                    fields="files(id,name,mimeType,webViewLink,modifiedTime),nextPageToken",
+                    pageSize=500,
+                    pageToken=page_token,
+                    supportsAllDrives=True,
+                    includeItemsFromAllDrives=True,
+                ).execute()
+                files.extend(resp.get("files", []))
+                page_token = resp.get("nextPageToken")
+                if not page_token:
+                    break
+            return files
+        except Exception as e:
+            logger.warning(f"⚠ Error listing folder {folder_id} (attempt {attempt}/{retries}): {e}")
+            if attempt < retries:
+                time.sleep(2 * attempt)
+    return []
 
 
-def find_instruction_file(drive, game_id):
+# ---------- File matching helpers ----------
+# Leading ID prefix in a Drive file/folder name, e.g.
+#   "523_Fortune Coins", "GAMEID_887_Super Ace Hula", "ID_300 Fortune Gems 3"
+_ID_PREFIX_RE = re.compile(r"^\s*(?:GAME\s*ID|ID)?[\s_\-]*0*(\d+)(?=[\s_\-.])", re.IGNORECASE)
+
+# Suffixes that are not part of the game name
+_SUFFIX_RE = re.compile(
+    r"[\s_\-]*(game\s*rules?|instructions?|introduction(?:\s*ver\s*[\d.]+)?)(?:[\s_\-]*(en|eng|english))?\s*$",
+    re.IGNORECASE,
+)
+
+
+def _file_game_id(name):
+    """Return the Game ID at the start of a file name, or None"""
+    m = _ID_PREFIX_RE.match(name)
+    return m.group(1) if m else None
+
+
+def _normalize_name(name):
+    """Lowercase, drop extension / ID prefix / 'instructions' suffix / symbols"""
+    n = re.sub(r"\.(pdf|docx?|xlsx?|pptx?|zip)$", "", name.strip(), flags=re.IGNORECASE)
+    if _file_game_id(n):
+        n = _ID_PREFIX_RE.sub("", n, count=1)
+    for _ in range(2):
+        n = _SUFFIX_RE.sub("", n)
+    return re.sub(r"[^a-z0-9]", "", n.lower())
+
+
+def _pick_best(candidates):
+    """Prefer 'instruction' files, then PDFs, then the most recently modified"""
+    def score(f):
+        nm = f["name"].lower()
+        return (
+            "instruction" in nm or "rule" in nm,
+            nm.endswith(".pdf") or f.get("mimeType") == "application/vnd.google-apps.folder",
+            f.get("modifiedTime", ""),
+        )
+    return sorted(candidates, key=score, reverse=True)[0]
+
+
+def match_file(files, game_id, game_name, label=""):
     """
-    Find instruction file by GAME ID ONLY (strict matching)
-    Pass 1: Exact ID boundary matching
-    Pass 2: Try without ID if Pass 1 fails (fallback)
+    Pass 1: Game ID strict match — the ID must be the leading number of the name
+            (523 matches '523_Fortune Coins' but NOT '1523_x', '5230_x', 'GAMEID_5231')
+    Pass 2: Full game name exact match after normalising
+            ('Fortune Hook Boom' == 'FortuneHookBoom_ instructions.pdf')
+            Files whose own leading ID belongs to a different game are skipped.
+    No keyword/fuzzy pass — that is what pulled 720 'Bison Fortune Coins' for 523 'Fortune Coins'.
     """
-    id_str = str(game_id).strip()
-    logger.info(f"  🔍 Searching instruction for ID: {id_str}")
-    
-    all_files = []
+    id_str = str(game_id).strip().lstrip("0") or "0"
+
+    by_id = [f for f in files if _file_game_id(f["name"]) == id_str]
+    if by_id:
+        best = _pick_best(by_id)
+        logger.info(f"    ✓ {label} by ID {id_str}: {best['name']}")
+        return best["webViewLink"]
+
+    target = _normalize_name(game_name or "")
+    if target:
+        by_name = [
+            f for f in files
+            if _normalize_name(f["name"]) == target
+            and _file_game_id(f["name"]) in (None, id_str)
+        ]
+        if by_name:
+            best = _pick_best(by_name)
+            logger.info(f"    ✓ {label} by name '{game_name}': {best['name']}")
+            return best["webViewLink"]
+
+    logger.info(f"    ✗ No {label} file for ID {id_str} / '{game_name}'")
+    return None
+
+
+def load_drive_indexes(drive):
+    """List every instruction + certificate file ONCE per request"""
+    instr_files = []
     for folder_id in INSTRUCTION_FOLDERS:
-        all_files.extend(list_drive_folder(drive, folder_id))
-    
-    logger.info(f"    Total instruction files: {len(all_files)}")
-    
-    # Pass 1: Match by Game ID with strict boundary
-    # Pattern: _523_, GAMEID_523, 523_, _523
-    patterns = [
-        f"{id_str}_",       # 300_
-        f"GAMEID_{id_str}_", # GAMEID_300_
-        f"_{id_str}_",      # _523_
-        f"GAMEID_{id_str}",  # GAMEID_523
-        f"_{id_str}",        # _523
-    ]
-    
-    for f in all_files:
-        title = f["name"].upper()
-        for pattern in patterns:
-            if pattern in title:
-                logger.info(f"    ✓ Found by ID: {f['name']}")
-                return f["webViewLink"]
-    
-    logger.info(f"    ✗ No instruction file found for ID {id_str}")
-    return None
+        instr_files.extend(list_drive_folder(drive, folder_id))
+    cert_files = list_drive_folder(drive, CERT_JILI_FOLDER)
+    logger.info(f"✓ Indexed {len(instr_files)} instruction / {len(cert_files)} certificate items")
+    return instr_files, cert_files
 
 
-def find_cert_folder(drive, game_id):
-    """
-    Find certificate file by GAME ID ONLY (strict matching)
-    """
-    id_str = str(game_id).strip()
-    logger.info(f"  🔍 Searching certificate for ID: {id_str}")
-    
-    all_files = list_drive_folder(drive, CERT_JILI_FOLDER)
-    logger.info(f"    Total certificate files: {len(all_files)}")
-    
-    # Match by Game ID with strict boundary
-    patterns = [
-        f"{id_str}_",       # 300_
-        f"GAMEID_{id_str}_", # GAMEID_300_
-        f"_{id_str}_",
-        f"GAMEID_{id_str}",
-        f"_{id_str}",
-    ]
-    
-    for f in all_files:
-        title = f["name"].upper()
-        for pattern in patterns:
-            if pattern in title:
-                logger.info(f"    ✓ Found by ID: {f['name']}")
-                return f["webViewLink"]
-    
-    logger.info(f"    ✗ No certificate file found for ID {id_str}")
-    return None
+def find_instruction_file(instr_files, game_id, game_name):
+    return match_file(instr_files, game_id, game_name, label="instruction")
+
+
+def find_cert_folder(cert_files, game_id, game_name):
+    return match_file(cert_files, game_id, game_name, label="certificate")
 
 
 def check_pagcor_approval(game, approved_lookup):
@@ -218,12 +249,14 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         "Game Certificate File",
     ]
 
+    instr_files, cert_files = load_drive_indexes(drive)
+
     data_rows = []
     for g in games_data:
         approval = check_pagcor_approval(g, approved_lookup)
-        instr = find_instruction_file(drive, g["GameID"])
+        instr = find_instruction_file(instr_files, g["GameID"], g["Name"])
         instr_val = instr if instr else "Please contact JILI BD"
-        cert = find_cert_folder(drive, g["GameID"])
+        cert = find_cert_folder(cert_files, g["GameID"], g["Name"])
         cert_val = cert if cert else "This game has not yet been scheduled for lab certification"
 
         min_bet = str(g["Min_Bet"]) if g["Min_Bet"] else ""
