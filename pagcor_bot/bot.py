@@ -26,6 +26,8 @@ INSTRUCTION_FOLDERS = [
     "1Kgy7Jqi5akFVTFsSvhU7w9J3oIEaHimW",
     "1XVNMHilWKrNidX0sjP8rr0t_e6bl0_S9",
     "1bXgsQDqDcqLAylVbhEEzY05QX7mnXzGQ",
+    "13ZL4uyrgQV3NjqvHlaJoFzlHxzaHXFRd",  # Casino_Game introduction_Eng_ver
+    "179xCBW8WXczK3oiW3UTZm8605j1OAoEy",  # 【share】JILI_Game introduction (GAMEID_xxx files)
 ]
 
 CONFIRM_GAMES = 0
@@ -126,7 +128,12 @@ def list_drive_folder(drive, folder_id, retries=3):
 # ---------- File matching helpers ----------
 # Leading ID prefix in a Drive file/folder name, e.g.
 #   "523_Fortune Coins", "GAMEID_887_Super Ace Hula", "ID_300 Fortune Gems 3"
-_ID_PREFIX_RE = re.compile(r"^\s*(?:GAME\s*ID|ID)?[\s_\-]*0*(\d+)(?=[\s_\-.])", re.IGNORECASE)
+# A bare leading number counts as an ID only when followed by "_" ("571_Royal Quest"),
+# so game names that start with a number ("3 Bao Riches") are not misread as ID 3.
+_ID_PREFIX_RE = re.compile(
+    r"^\s*(?:(?:GAME\s*ID|ID)[\s_\-]*0*(\d+)(?=[\s_\-.])|0*(\d+)(?=_))",
+    re.IGNORECASE,
+)
 
 # Suffixes that are not part of the game name
 _SUFFIX_RE = re.compile(
@@ -138,7 +145,7 @@ _SUFFIX_RE = re.compile(
 def _file_game_id(name):
     """Return the Game ID at the start of a file name, or None"""
     m = _ID_PREFIX_RE.match(name)
-    return m.group(1) if m else None
+    return (m.group(1) or m.group(2)) if m else None
 
 
 def _normalize_name(name):
@@ -466,7 +473,7 @@ def auth_check(func):
 @auth_check
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I'm the PAGCOR Game Parameter Bot (ID-based search).\nBuild: 2026-10-15b\n\n"
+        "Hi! I'm the PAGCOR Game Parameter Bot (ID-based search).\nBuild: 2026-11-02\n\n"
         "How to use:\n"
         "`ทำไฟล์เกม [ID1], [ID2], [ID3] ให้ [client] หน่อย`\n\n"
         "Example:\n"
