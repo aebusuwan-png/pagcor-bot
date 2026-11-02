@@ -398,8 +398,10 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         sheets_svc2.spreadsheets().batchUpdate(
             spreadsheetId=sheet_id, body={"requests": requests}
         ).execute()
+        fmt_error = None
     except Exception as fmt_err:
-        logger.warning(f"Formatting failed (non-critical): {fmt_err}")
+        logger.warning(f"Formatting failed (non-critical): {fmt_err}", exc_info=True)
+        fmt_error = str(fmt_err)[:600]
 
     # Set public permission
     drive.permissions().create(
@@ -409,7 +411,7 @@ def build_output_sheet(drive, sheets_svc, games_data, client_name, approved_look
         supportsAllDrives=True
     ).execute()
 
-    return sheet_url, file_name
+    return sheet_url, file_name, fmt_error
 
 
 def parse_game_command(text):
@@ -464,7 +466,7 @@ def auth_check(func):
 @auth_check
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
-        "Hi! I'm the PAGCOR Game Parameter Bot (ID-based search).\n\n"
+        "Hi! I'm the PAGCOR Game Parameter Bot (ID-based search).\nBuild: 2026-10-15b\n\n"
         "How to use:\n"
         "`ทำไฟล์เกม [ID1], [ID2], [ID3] ให้ [client] หน่อย`\n\n"
         "Example:\n"
@@ -593,7 +595,7 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
     try:
         approved_lookup = fetch_pagcor_approved(sheets_svc)
         games_data = [g for _, g in found]
-        sheet_url, file_name = build_output_sheet(
+        sheet_url, file_name, fmt_error = build_output_sheet(
             drive, sheets_svc, games_data, client_name, approved_lookup
         )
         logger.info(f"✓ Sheet created: {file_name}")
@@ -602,6 +604,8 @@ async def handle_confirm(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📄 {file_name}\n\n"
             f"🔗 {sheet_url}"
         )
+        if fmt_error:
+            await update.message.reply_text(f"⚠️ Formatting step failed (data is OK):\n{fmt_error}")
     except Exception as e:
         logger.error(f"❌ Error creating file: {e}", exc_info=True)
         await update.message.reply_text(f"❌ Error creating file: {e}")
@@ -626,7 +630,7 @@ def main():
     )
     app.add_handler(CommandHandler("start", start))
     app.add_handler(conv_handler)
-    logger.info("🤖 Bot started with ID-based game search...")
+    logger.info("🤖 Bot started (build 2026-10-15b: strict match + tab-id formatting)")
     app.run_polling(drop_pending_updates=True)
 
 
